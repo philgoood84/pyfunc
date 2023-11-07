@@ -1,5 +1,7 @@
 from dataclasses import dataclass
-from typing import Callable
+from functools import partial, wraps
+from typing import Callable, Protocol
+import inspect
 
 type Result[S, E] = Ok[S] | Err[E]
 
@@ -17,19 +19,28 @@ class _Protocol[T](Protocol):
         ...
 
     def map2[T, S, U, E](self, s: Result[S, E], f: Callable[[T, S], U]) -> Result[U, E]:
-        return s.apply(self.map(lambda ts: partial(f, ts)))
+        return s.apply(self.map(lambda t: partial(f, t)))
 
-    def map3[T, S, U, V, E](self, s: Result[S, E], u: Result[V, E], f: Callable[[T, S, U], V]) -> Result[V, E]:
-        return u.apply(self.map2(lambda ts, ss: partial(f, ts, ss)))
+    def map3[T, S, U, V, E](self, s: Result[S, E], u: Result[U, E], f: Callable[[T, S, U], V]) -> Result[V, E]:
+        return u.apply(self.map2(s, lambda ts, ss: partial(f, ts, ss)))
 
-    def map4[T, S, U, V, W, E](self, s: Result[S, E], u: Result[V, E], w: Result[W, E], f: Callable[[T, S, U, V], W]) -> Result[W, E]:
-        return v.apply(self.map3(lambda ts, ss, us: partial(f, ts, ss, us)))
+    def map4[T, S, U, V, W, E](self, s: Result[S, E], u: Result[U, E], v: Result[V, E], f: Callable[[T, S, U, V], W]) -> Result[W, E]:
+        return v.apply(self.map3(s, u, lambda ts, ss, us: partial(f, ts, ss, us)))
 
     def and_then[T, S, E](self, f: Callable[T, Result[S, E]]) -> Result[S, E]:
         ...
     
     def join[T, E](self) -> Result[T, E]:
         ...
+
+    def and_then2[T, S, U, E](self, s: Result[S, E], f: Callable[[T, S], Result[U, E]]) -> Result[U, E]:
+        return self.map2(s, f).join()
+
+    def and_then3[T, S, U, V, E](self, s: Result[S, E], u: Result[U, E], f: Callable[[T, S, U], Result[V, E]]) -> Result[V, E]:
+        return self.map3(s, u, f).join()
+
+    def and_then4[T, S, U, V, W, E](self, s: Result[S, E], u: Result[U, E], v: Result[V, E], f: Callable[[T, S, U, V], Result[W, E]]) -> Result[W, E]:
+        return self.map4(s, u, v, f).join()
 
     def m_compose[T, S, U, E](self, f1: Callable[T, Result[S, E]], f2: Callable[S, Result[U, E]]) -> Result[U, E]:
         return self.and_then(f1).and_then(f2)
@@ -45,8 +56,8 @@ class Ok[Success](_Protocol):
     def pure[Success, E](cls, value: Success) -> Result[Success, E]:
         return Ok(value= value)
 
-    def map[Success, E](self, f: Callable[Success, T]) -> Result[T, E]:
-        return Ok.pure(f(ok.value))
+    def map[Success, T, E](self, f: Callable[Success, T]) -> Result[T, E]:
+        return Ok.pure(f(self.value))
 
     def apply[Success, T, E](self, rf: Result[Callable[Success, T], E]) -> Result[T, E]:
         match rf:
@@ -65,23 +76,27 @@ class Ok[Success](_Protocol):
             case _:
                 return self
 
+    def is_err(self) -> bool:
+        return False
 
 
+
+@dataclass
 class Err[Error: Exception](_Protocol):
     __slots__ = ('value',)
     value: Error
 
     @classmethod
     def pure[S, Error](cls, value: Error) -> Result[S, Error]:
-        return Err(value)
+        return Err(value= value)
 
-    def map[Success, E](self, f: Callable[Success, T]) -> Result[T, E]:
+    def map[Error, T, E](self, f: Callable[..., T]) -> Result[T, E]:
         return self
 
     def apply[T, S, E](self, rf: Result[Callable[T, S], E]) -> Result[S, E]:
         return self
 
-    def and_then(self, f: Callable[Success, Result[T, E]]) -> Result[T, E]:
+    def and_then[T, Error, E](self, f: Callable[..., Result[T, E]]) -> Result[T, Error]:
         return self
 
     def join[T, Error](self):
@@ -92,3 +107,37 @@ class Err[Error: Exception](_Protocol):
                 return self.value.join()
             case _:
                 return self
+
+    def is_err(self) -> bool:
+        return True
+
+
+def as_result[**P, R, E: Exception](*exceptions: E) -> Callable[[Callable[P, R]], Callable[P, Result[R, E]]]:
+    """
+    Copied from python/result
+    Make a decorator to turn a function into one that returns a ``Result``.
+
+    Regular return values are turned into ``Ok(return_value)``. Raised
+    exceptions of the specified exception type(s) are turned into ``Err(exc)``.
+    """
+    if not exceptions or not all(
+        inspect.isclass(exception) and issubclass(exception, BaseException)
+        for exception in exceptions
+    ):
+        raise TypeError("as_result() requires one or more exception types")
+
+    def decorator(f: Callable[P, R]) -> Callable[P, Result[R, E]]:
+        """
+        Decorator to turn a function into one that returns a ``Result``.
+        """
+
+        @wraps(f)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[R, E]:
+            try:
+                return Ok(f(*args, **kwargs))
+            except exceptions as exc:
+                return Err(exc)
+
+        return wrapper
+
+    return decorator
