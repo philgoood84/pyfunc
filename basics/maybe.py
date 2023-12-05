@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from functools import partial, wraps
 from typing import Callable, Protocol, Never, Self
+from Helpers.decorators import singleton
 
 type Maybe[T] = Just[T] | Nothing
 
@@ -121,6 +122,7 @@ class Just[T](_Protocol):
             return self
         return other
 
+@singleton
 @dataclass(frozen=True)
 class Nothing(_Protocol):
     """Nothing class to represent the absence of something
@@ -179,5 +181,4 @@ def as_maybe[**T, U](func):# -> Callable[[Callable[T, U]], Callable[T, Maybe[U]]
             case _:
                 return Just(res)
     return wrapper
-
 

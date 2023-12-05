@@ -45,6 +45,8 @@ class _Protocol[T](Protocol):
     def m_compose[T, S, U, E](self, f1: Callable[T, Result[S, E]], f2: Callable[S, Result[U, E]]) -> Result[U, E]:
         return self.and_then(f1).and_then(f2)
 
+    def unwraps_or_raises[T](self) -> T:
+        ...
 
 
 @dataclass
@@ -79,6 +81,9 @@ class Ok[Success](_Protocol):
     def is_err(self) -> bool:
         return False
 
+    def unwraps_or_raises[T](self) -> T:
+        return self.value
+
 
 
 @dataclass
@@ -110,6 +115,9 @@ class Err[Error: Exception](_Protocol):
 
     def is_err(self) -> bool:
         return True
+
+    def unwraps_or_raises[T](self) -> T:
+        raise self.value
 
 
 def as_result[**P, R, E: Exception](*exceptions: E) -> Callable[[Callable[P, R]], Callable[P, Result[R, E]]]:
